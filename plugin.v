@@ -20,7 +20,7 @@ pub mut:
 	rpcmethods    map[string]RPCMethod = map{}
 }
 
-struct RPCMethod {
+pub struct RPCMethod {
 	usage            string
 	description      string
 	long_description string
