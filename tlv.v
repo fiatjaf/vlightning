@@ -2,6 +2,20 @@ module vlightning
 
 import encoding.binary
 
+pub const (
+	tlv_amount_to_forward    = 2
+	tlv_outgoing_cltv        = 4
+	tlv_outgoing_channel_id  = 6
+	tlv_payment_data         = 8
+
+	tlv_invoice_features     = 66097
+	tlv_outgoing_node_id     = 66098
+	tlv_invoice_routing_info = 66099
+	tlv_trampoline_onion     = 66100
+
+	tlv_keysend              = 5482373484
+)
+
 pub fn encode_bigsize(data int) []byte {
 	if data < 0xfd {
 		mut x := []byte{len: 1}
