@@ -12,12 +12,14 @@ pub mut:
 	rpc_file      string
 	network       string
 	options       map[string]json2.Any
+	dynamic       bool
 
 	client Client
 
 	hooks         map[string]HookHandler = map{}
 	subscriptions map[string]SubscriptionHandler = map{}
 	rpcmethods    map[string]RPCMethod = map{}
+	notifications []Notification       = []
 }
 
 pub struct RPCMethod {
@@ -27,9 +29,15 @@ pub struct RPCMethod {
 	handler          RPCMethodHandler
 }
 
-type HookHandler = fn (Plugin, json2.Any) ?json2.Any
-type SubscriptionHandler = fn (Plugin, json2.Any)
-type RPCMethodHandler = fn (Plugin, json2.Any) ?json2.Any
+pub struct Notification {
+	method string
+}
+
+pub type HookHandler = fn (Plugin, json2.Any) ?json2.Any
+
+pub type SubscriptionHandler = fn (Plugin, json2.Any)
+
+pub type RPCMethodHandler = fn (Plugin, json2.Any) ?json2.Any
 
 pub fn (p Plugin) log(text string) {
 	eprintln('[plugin-$p.name] $text')
@@ -38,10 +46,22 @@ pub fn (p Plugin) log(text string) {
 pub fn (mut p Plugin) initialize() {
 	p.log('initialized version $p.version')
 
+	mut buffer := ''
+	mut value := ''
 	for {
 		line := os.get_line()
 
-		raw_message := json2.raw_decode(line) or { continue }
+		// c-lightning guarantees that every command will be followed by an empty line
+		// so we buffer everything between empty lines and use that as the message
+		if line.len == 0 {
+			value = buffer
+			buffer = ''
+		} else {
+			buffer += line
+			continue
+		}
+
+		raw_message := json2.raw_decode(value) or { continue }
 		message := raw_message.as_map()
 		dump(message)
 		mut response := map{
@@ -51,7 +71,7 @@ pub fn (mut p Plugin) initialize() {
 		}
 		match message['method'].str() {
 			'getmanifest' {
-				mut hooks := []json2.Any{len: p.hooks.len, init: json2.Any('')}
+				mut hooks := []json2.Any{len: p.hooks.len, init: &json2.Null{}}
 				mut i := 0
 				for k, _ in p.hooks {
 					hooks[i] = json2.Any(map{
@@ -60,14 +80,14 @@ pub fn (mut p Plugin) initialize() {
 					i += 1
 				}
 
-				mut subscriptions := []json2.Any{cap: p.subscriptions.len}
+				mut subs := []json2.Any{len: p.subscriptions.len, init: &json2.Null{}}
 				i = 0
 				for k, _ in p.subscriptions {
-					subscriptions[i] = json2.Any([json2.Any(k)])
+					subs[i] = json2.Any([json2.Any(k)])
 					i += 1
 				}
 
-				mut rpcmethods := []json2.Any{cap: p.rpcmethods.len}
+				mut rpcmethods := []json2.Any{len: p.rpcmethods.len, init: &json2.Null{}}
 				i = 0
 				for name, defs in p.rpcmethods {
 					rpcmethods[i] = json2.Any(map{
@@ -79,13 +99,22 @@ pub fn (mut p Plugin) initialize() {
 					i += 1
 				}
 
+				mut ntopics := []json2.Any{len: p.notifications.len, init: &json2.Null{}}
+				i = 0
+				for notification in p.notifications {
+					ntopics[i] = json2.Any(map{
+						'method': json2.Any(notification.method)
+					})
+					i += 1
+				}
 				mut result := map[string]json2.Any{}
 				result['options'] = json2.Any([]json2.Any{cap: 0})
 				result['rpcmethods'] = rpcmethods
 				result['hooks'] = hooks
-				result['subscriptions'] = subscriptions
+				result['subscriptions'] = subs
 				result['features'] = json2.Any('')
-				result['dynamic'] = json2.Any(false)
+				result['dynamic'] = p.dynamic
+				result['notifications'] = ntopics
 
 				response['result'] = result
 			}
@@ -123,7 +152,17 @@ pub fn (mut p Plugin) initialize() {
 					if method in p.rpcmethods {
 						defs := p.rpcmethods[method]
 						handler := defs.handler
-						if result := handler(p, message['params']) {
+
+						// params may be an array or a dict
+						params := parse_params(defs.usage, message['params']) or {
+							response['error'] = json2.Any(map{
+								'code':    json2.Any(err.code)
+								'message': json2.Any(err.msg)
+							})
+							break
+						}
+
+						if result := handler(p, params) {
 							response['result'] = result
 						} else {
 							response['error'] = map{
@@ -143,4 +182,23 @@ pub fn (mut p Plugin) initialize() {
 		print(response)
 		os.flush()
 	}
+}
+
+fn parse_params(template string, params json2.Any) ?map[string]json2.Any {
+	if params is map[string]json2.Any {
+		return params
+	}
+
+	if params is []json2.Any {
+		mut map_params := map[string]json2.Any{}
+		param_names := template.replace('[', '').replace(']', '').split(' ')
+		for p, param in params {
+			if param_names.len > p {
+				map_params[param_names[p]] = param
+			}
+		}
+		return map_params
+	}
+
+	return error('params is not an array nor a map: $params'), 400
 }
