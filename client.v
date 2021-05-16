@@ -22,10 +22,16 @@ pub fn (c Client) call(method string, params ...json2.Any) ?json2.Any {
 		panic('failed to write to unix socket $c.path: $err.msg')
 	}
 
-	mut response := []byte{}
-	stream.read(mut response) ?
+	mut raw := ''
+	mut n := 4096
+	for n == 4096 {
+		mut response := []byte{len: 4096}
+		n = stream.read(mut response) ?
+		raw += response.bytestr()
+		raw = raw[0..raw.index_byte(0)]
+	}
 
-	ival := json2.raw_decode(response.str()) ?
+	ival := json2.raw_decode(raw) or { return error('error decoding $raw: $err.msg') }
 	val := ival.as_map()
 	if 'error' in val {
 		return error(val['error'].as_map()['message'].str())
