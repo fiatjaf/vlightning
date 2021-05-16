@@ -63,7 +63,6 @@ pub fn (mut p Plugin) initialize() {
 
 		raw_message := json2.raw_decode(value) or { continue }
 		message := raw_message.as_map()
-		dump(message)
 		mut response := map{
 			'jsonrpc': json2.Any('2.0')
 			'version': message['version'] or { 0 }
@@ -178,7 +177,6 @@ pub fn (mut p Plugin) initialize() {
 			}
 		}
 
-		dump(response)
 		print(response)
 		os.flush()
 	}
